@@ -1,0 +1,19 @@
+# Render Blueprint — one Web Service (API + static frontend + WebSocket)
+# Docs: https://render.com/docs/blueprint-spec
+services:
+  - type: web
+    name: zoom-question-tracker
+    runtime: node
+    plan: free
+    region: oregon
+    buildCommand: npm run render-build
+    startCommand: node backend/server.js
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.16.0
+      - key: OPENAI_API_KEY
+        sync: false
+      # Required at BUILD time for Vite (question extraction in browser — prototype only)
+      - key: VITE_OPENAI_API_KEY
+        sync: false

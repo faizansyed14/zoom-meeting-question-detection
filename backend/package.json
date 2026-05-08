@@ -1,0 +1,13 @@
+{
+  "name": "zoom-question-tracker-backend",
+  "private": true,
+  "type": "module",
+  "main": "server.js",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "ws": "^8.18.0"
+  }
+}
+
