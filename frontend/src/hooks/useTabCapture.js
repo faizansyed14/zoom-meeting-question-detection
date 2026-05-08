@@ -11,7 +11,8 @@ export function useTabCapture({ onAudioChunk } = {}) {
   const [isCapturing, setIsCapturing] = useState(false)
   const [error, setError] = useState('')
 
-  const streamRef = useRef(null)
+  const tabStreamRef = useRef(null)
+  const micStreamRef = useRef(null)
   const acRef = useRef(null)
   const sourceRef = useRef(null)
   const nodeRef = useRef(null)
@@ -34,23 +35,34 @@ export function useTabCapture({ onAudioChunk } = {}) {
     } catch {
       // ignore
     }
-    if (streamRef.current) {
-      for (const t of streamRef.current.getTracks()) t.stop()
-    }
-    streamRef.current = null
+    if (tabStreamRef.current) for (const t of tabStreamRef.current.getTracks()) t.stop()
+    if (micStreamRef.current) for (const t of micStreamRef.current.getTracks()) t.stop()
+    tabStreamRef.current = null
+    micStreamRef.current = null
     acRef.current = null
     sourceRef.current = null
     nodeRef.current = null
     accRef.current = new Int16Array(0)
   }, [])
 
-  const startCapture = useCallback(async () => {
+  const startCapture = useCallback(async ({ includeTab = true, includeMic = false } = {}) => {
     setError('')
     const hasMediaDevices = !!navigator.mediaDevices
     const hasGDM = !!navigator.mediaDevices?.getDisplayMedia
+    const hasGUM = !!navigator.mediaDevices?.getUserMedia
     const secure = typeof window !== 'undefined' ? window.isSecureContext : true
 
-    if (!hasMediaDevices || !hasGDM) {
+    if (!includeTab && !includeMic) {
+      setError('Select at least one source: Participants or Host.')
+      throw new Error('No capture sources selected')
+    }
+
+    if (!hasMediaDevices) {
+      setError('MediaDevices not supported in this browser. Use Chrome or Edge.')
+      throw new Error('mediaDevices not supported')
+    }
+
+    if (includeTab && !hasGDM) {
       const hints = []
       if (!secure) hints.push('not a secure context (use https or localhost)')
       hints.push('use Chrome/Edge')
@@ -59,34 +71,73 @@ export function useTabCapture({ onAudioChunk } = {}) {
       throw new Error('getDisplayMedia not supported')
     }
 
+    if (includeMic && !hasGUM) {
+      setError('Microphone capture not supported in this browser.')
+      throw new Error('getUserMedia not supported')
+    }
+
     // Must run directly from click handler (user gesture).
-    let stream
-    try {
-      // Chrome/Edge: tab audio often only available when video is also requested.
-      stream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true })
-    } catch (e) {
-      const name = e?.name || ''
-      if (name === 'NotAllowedError' || name === 'SecurityError') {
-        setError('Capture blocked/canceled. In picker select Zoom tab and enable Share tab audio.')
-      } else {
-        setError(e?.message || 'Failed to start capture.')
+    let tabStream = null
+    if (includeTab) {
+      try {
+        // Chrome/Edge: tab audio often only available when video is also requested.
+        tabStream = await navigator.mediaDevices.getDisplayMedia({ audio: true, video: true })
+      } catch (e) {
+        const name = e?.name || ''
+        if (name === 'NotAllowedError' || name === 'SecurityError') {
+          setError('Capture blocked/canceled. In picker select Zoom tab and enable Share tab audio.')
+        } else {
+          setError(e?.message || 'Failed to start capture.')
+        }
+        throw e
       }
-      throw e
+
+      // Defensive: stop any video tracks if browser returns them.
+      try {
+        tabStream.getVideoTracks().forEach((t) => t.stop())
+      } catch {
+        // ignore
+      }
+
+      tabStreamRef.current = tabStream
     }
 
-    // Defensive: stop any video tracks if browser returns them.
-    try {
-      stream.getVideoTracks().forEach((t) => t.stop())
-    } catch {
-      // ignore
+    let micStream = null
+    if (includeMic) {
+      try {
+        micStream = await navigator.mediaDevices.getUserMedia({
+          audio: {
+            echoCancellation: true,
+            noiseSuppression: true,
+          },
+        })
+        micStreamRef.current = micStream
+      } catch (e) {
+        setError('Microphone permission denied. Allow mic access to capture host voice.')
+        if (!tabStream) throw e
+      }
     }
-
-    streamRef.current = stream
 
     const ac = new AudioContext({ sampleRate: 24000 })
     acRef.current = ac
 
-    const source = ac.createMediaStreamSource(stream)
+    // Merge tab audio + (optional) mic into one stream before worklet.
+    const destination = ac.createMediaStreamDestination()
+    if (tabStream) {
+      const tabSource = ac.createMediaStreamSource(tabStream)
+      tabSource.connect(destination)
+    }
+    if (micStream) {
+      const micSource = ac.createMediaStreamSource(micStream)
+      micSource.connect(destination)
+    }
+
+    if (!destination.stream.getAudioTracks().length) {
+      setError('No audio tracks captured. Enable Share tab audio and/or allow microphone.')
+      throw new Error('No audio tracks')
+    }
+
+    const source = ac.createMediaStreamSource(destination.stream)
     sourceRef.current = source
 
     await ac.audioWorklet.addModule('/pcm-processor.js')

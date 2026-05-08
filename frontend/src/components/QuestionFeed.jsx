@@ -1,12 +1,12 @@
 import React, { useEffect, useMemo, useRef } from 'react'
 import QuestionCard from './QuestionCard.jsx'
 
-function Skeleton() {
+function SkeletonCard() {
   return (
-    <div className="qCard qSkeleton">
-      <div className="skLine skWide" />
-      <div className="skLine" />
-      <div className="skLine skNarrow" />
+    <div className="q-skel">
+      <div className="q-skel-line w80" />
+      <div className="q-skel-line w60" />
+      <div className="q-skel-line w40" />
     </div>
   )
 }
@@ -25,44 +25,35 @@ export default function QuestionFeed({ questions, isLoading, lastAnalysisAt, las
   }, [count])
 
   return (
-    <div className="panel">
-      <div className="panelHeader">
-        <div className="panelTitle">
-          Questions <span className="countPill">{count} detected</span>
-        </div>
-        <div className="muted" style={{ fontSize: 12 }}>
-          {lastAnalysisError ? 'Analysis error' : lastAnalysisAt ? `Last analysis ${lastAnalysisAt}` : 'No analysis yet'}
-        </div>
+    <div className="feed-panel">
+      <div className="feed-header">
+        <span className="label">Questions Detected</span>
+        {count > 0 ? <span className="feed-count">{count}</span> : null}
       </div>
+      <div className="feed-list" ref={listRef}>
+        {lastAnalysisError ? <div className="error-toast">{lastAnalysisError}</div> : null}
 
-      <div className="panelBody" ref={listRef}>
-        {lastAnalysisError ? <div className="errorText">{lastAnalysisError}</div> : null}
         {count === 0 && isLoading ? (
           <>
-            <Skeleton />
-            <Skeleton />
-            <Skeleton />
+            <SkeletonCard />
+            <SkeletonCard />
+            <SkeletonCard />
           </>
         ) : null}
 
         {count === 0 && !isLoading ? (
-          <div className="emptyState">
-            <div className="emptyTitle">Listening for questions…</div>
-            <div className="emptySub">Questions extracted as transcript arrives.</div>
+          <div className="feed-empty">
+            <div className="feed-empty-icon">👂</div>
+            <p className="feed-empty-title">Listening for questions</p>
+            <p className="feed-empty-sub">
+              Questions appear here automatically
+              <br />
+              as people ask them
+            </p>
           </div>
         ) : null}
 
-        {newestFirst.map((q, i) => (
-          <QuestionCard
-            key={q.id}
-            index={count - i}
-            question={q.question}
-            rawQuestion={q.rawQuestion}
-            context={q.context}
-            type={q.type}
-            timestamp={q.timestamp}
-          />
-        ))}
+        {count > 0 ? newestFirst.map((q, i) => <QuestionCard key={q.id} question={q} index={count - i} />) : null}
       </div>
     </div>
   )

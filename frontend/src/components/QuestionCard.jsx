@@ -1,40 +1,19 @@
 import React from 'react'
 
-const TYPE_CLASS = {
-  clarification: 'badgeBlue',
-  decision: 'badgeAmber',
-  technical: 'badgePurple',
-  opinion: 'badgeTeal',
-  other: 'badgeGray',
-}
-
-function summarizeQuestionText(q) {
-  const raw = String(q || '').replace(/\\s+/g, ' ').trim()
-  if (!raw) return ''
-
-  // If model returned long mixed context + question, keep last question-like sentence.
-  const parts = raw.split(/(?<=[.?!])\\s+/g)
-  const lastQ = [...parts].reverse().find((p) => /\\?\\s*$/.test(p) || /^(what|why|how|when|where|who|can|could|would|should|do|does|did|is|are|am|will|may|might)\\b/i.test(p.trim()))
-  const picked = (lastQ || raw).trim()
-
-  const MAX = 120
-  if (picked.length <= MAX) return picked
-  return picked.slice(0, MAX - 1).trimEnd() + '…'
-}
-
-export default function QuestionCard({ question, rawQuestion, context, type, index, timestamp }) {
-  const cls = TYPE_CLASS[type] || TYPE_CLASS.other
-  const shortQ = summarizeQuestionText(question)
+export default function QuestionCard({ question, index }) {
+  const t = question?.type || 'other'
+  const src = question?.source === 'host' ? 'Host' : 'Participants'
 
   return (
-    <div className="qCard qEnter" title={String(rawQuestion || question || '')}>
-      <div className="qTop">
-        <div className="qIndex">{index}</div>
-        <div className={`qType ${cls}`}>{type}</div>
-        <div className="qTime">{timestamp}</div>
+    <div className={`q-card q-card-${t}`} title={String(question?.rawQuestion || question?.question || '')}>
+      <div className="q-card-top">
+        <span className="q-num">#{index}</span>
+        <span className={`q-src ${question?.source === 'host' ? 'src-host' : 'src-participants'}`}>{src}</span>
+        <span className={`q-badge badge-${t}`}>{t}</span>
+        <span className="q-time">{question?.timestamp || ''}</span>
       </div>
-      <div className="qText">{shortQ}</div>
-      {context ? <div className="qContext">{context}</div> : null}
+      <p className="q-text">{question?.question || ''}</p>
+      {question?.context ? <p className="q-context">{question.context}</p> : null}
     </div>
   )
 }

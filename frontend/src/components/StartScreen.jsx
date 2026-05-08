@@ -1,31 +1,37 @@
 import React from 'react'
 
-export default function StartScreen({ onStart, error, onShowHowTo }) {
+export default function StartScreen({ onStart, error }) {
   return (
-    <div className="startScreen">
-      <div className="startCard">
-        <div className="startTitle">Meeting Question Tracker</div>
-        <div className="startSubtitle">Captures questions from your Zoom call in real time</div>
+    <div className="start-screen">
+      <div className="start-glow" />
 
-        <button className="btnPrimary startBtn" onClick={onStart}>
-          Start Listening
+      <div className="start-card">
+        <h1 className="start-title">Zoom</h1>
+        <p className="start-subtitle">Real-time question detection from your Zoom meeting</p>
+
+        <div className="start-steps">
+          <div className="step">
+            <span className="step-num">1</span>
+            <span className="step-text">Click Start Listening below</span>
+          </div>
+          <div className="step">
+            <span className="step-num">2</span>
+            <span className="step-text">Select your Zoom tab in the browser dialog</span>
+          </div>
+          <div className="step">
+            <span className="step-num">3</span>
+            <span className="step-text">Choose what to transcribe (Participants / Host) — questions appear automatically</span>
+          </div>
+        </div>
+
+        <button className="btn-start-main" onClick={onStart}>
+          <span className="btn-icon">▶</span>
+          Get Started
         </button>
 
-        <div className="howSteps">
-          <div className="howStep">1. Click Start Listening</div>
-          <div className="howStep">2. In the browser dialog, select your Zoom tab</div>
-          <div className="howStep">3. Questions will appear here automatically</div>
-        </div>
+        <p className="start-note"> Works best in Chrome or Edge — tab audio capture required</p>
 
-        <div className="startMeta">
-          <button className="linkBtn" onClick={onShowHowTo} type="button">
-            How to use
-          </button>
-          <div className="startWarn">Uses Chrome tab audio capture. Best in Chrome/Edge. Safari not supported.</div>
-          <div className="startNote">Realtime: streams audio to local backend, transcribed word-by-word via OpenAI Realtime.</div>
-        </div>
-
-        {error ? <div className="errorText">{error}</div> : null}
+        {error && <div className="start-error">{error}</div>}
       </div>
     </div>
   )

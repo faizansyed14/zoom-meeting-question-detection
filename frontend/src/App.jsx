@@ -3,9 +3,10 @@ import StartScreen from './components/StartScreen.jsx'
 import StatusBar from './components/StatusBar.jsx'
 import TranscriptPanel from './components/TranscriptPanel.jsx'
 import QuestionFeed from './components/QuestionFeed.jsx'
-import { useTabCapture } from './hooks/useTabCapture.js'
 import { useRealtimeWS } from './hooks/useRealtimeWS.js'
 import { extractQuestions } from './utils/openai.js'
+import { useAudioCapture } from './hooks/useAudioCapture.js'
+import SetupScreen from './components/SetupScreen.jsx'
 
 function nowStamp() {
   const d = new Date()
@@ -146,7 +147,7 @@ function HowToModal({ onClose }) {
       <div className="modal" onMouseDown={(e) => e.stopPropagation()}>
         <div className="modalHeader">
           <div className="modalTitle">How to use</div>
-          <button className="btnGhost" onClick={onClose} type="button">
+          <button className="btn-export modal-close" onClick={onClose} type="button">
             Close
           </button>
         </div>
@@ -172,54 +173,84 @@ function HowToModal({ onClose }) {
 }
 
 export default function App() {
-  const [status, setStatus] = useState('idle') // idle | connecting | live | stopped
+  const [status, setStatus] = useState('idle') // idle | setup | connecting | live | stopped
   const [questions, setQuestions] = useState([])
   const [isAnalyzing, setIsAnalyzing] = useState(false)
-  const [fullTranscript, setFullTranscript] = useState('')
-  const [interimText, setInterimText] = useState('')
+  const [fullTranscript, setFullTranscript] = useState({ participants: '', host: '' })
+  const [interimText, setInterimText] = useState({ participants: '', host: '' })
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const [isTranscriptCollapsed, setIsTranscriptCollapsed] = useState(false)
   const [showHowTo, setShowHowTo] = useState(false)
   const [localError, setLocalError] = useState('')
   const [lastAnalysisAt, setLastAnalysisAt] = useState('')
   const [lastAnalysisError, setLastAnalysisError] = useState('')
+  const [captureSources, setCaptureSources] = useState({ participants: true, host: true })
 
-  const audioCbRef = useRef(null)
-  const { startCapture, stopCapture, isCapturing, error: captureError } = useTabCapture({
-    onAudioChunk: (b64) => audioCbRef.current?.(b64),
+  const participantsAudioCbRef = useRef(null)
+  const hostAudioCbRef = useRef(null)
+
+  const participantsCapture = useAudioCapture({
+    onAudioChunk: (b64) => participantsAudioCbRef.current?.(b64),
+  })
+  const hostCapture = useAudioCapture({
+    onAudioChunk: (b64) => hostAudioCbRef.current?.(b64),
   })
 
-  const { connect, sendAudio, disconnect, isConnected } = useRealtimeWS({
+  const participantsWS = useRealtimeWS({
     onTranscriptDelta: (delta) => {
       if (!delta) return
       const clean = sanitizeEnglishUi(delta)
       if (!clean) return
-      setInterimText((t) => appendSmooth(t, clean).slice(-5000))
+      setInterimText((t) => ({ ...t, participants: appendSmooth(t.participants, clean).slice(-5000) }))
       wordCountRef.current += clean.trim() ? clean.trim().split(/\s+/).length : 0
       setWordCount(wordCountRef.current)
     },
-    onTranscriptCompleted: (t) => {
-      const sentence = sanitizeEnglishUi(t)
-      if (!sentence) return
-      setFullTranscript((prev) => (prev ? `${prev}\n${sentence}` : sentence))
-      fullTranscriptRef.current = fullTranscriptRef.current ? `${fullTranscriptRef.current}\n${sentence}` : sentence
-      setInterimText('')
-      sentencesSinceAnalysisRef.current += 1
+    onTranscriptCompleted: (t) => handleTranscriptCompleted('participants', t),
+    onError: (msg) => setLocalError(msg || 'Realtime error'),
+  })
 
-      // Immediate UI: heuristic question detector (fast, no API).
-      if (looksLikeQuestionSentence(sentence) && !isAudioCheckFormalities(sentence)) {
-        // Skip heuristic when sentence looks like multiple merged questions.
-        const tooLong = sentence.length > 160
-        const multi = /\bwhether\b/i.test(sentence) || (sentence.match(/\bor\b/gi) || []).length >= 2
-        if (tooLong && multi) return
+  const hostWS = useRealtimeWS({
+    onTranscriptDelta: (delta) => {
+      if (!delta) return
+      const clean = sanitizeEnglishUi(delta)
+      if (!clean) return
+      setInterimText((t) => ({ ...t, host: appendSmooth(t.host, clean).slice(-5000) }))
+      wordCountRef.current += clean.trim() ? clean.trim().split(/\s+/).length : 0
+      setWordCount(wordCountRef.current)
+    },
+    onTranscriptCompleted: (t) => handleTranscriptCompleted('host', t),
+    onError: (msg) => setLocalError(msg || 'Realtime error'),
+  })
 
+  function handleTranscriptCompleted(source, t) {
+    const sentence = sanitizeEnglishUi(t)
+    if (!sentence) return
+
+    setFullTranscript((prev) => ({
+      ...prev,
+      [source]: prev[source] ? `${prev[source]}\n${sentence}` : sentence,
+    }))
+
+    fullTranscriptRef.current[source] = fullTranscriptRef.current[source]
+      ? `${fullTranscriptRef.current[source]}\n${sentence}`
+      : sentence
+
+    setInterimText((prev) => ({ ...prev, [source]: '' }))
+
+    sentencesSinceAnalysisRef.current[source] += 1
+
+    if (looksLikeQuestionSentence(sentence) && !isAudioCheckFormalities(sentence)) {
+      const tooLong = sentence.length > 160
+      const multi = /\bwhether\b/i.test(sentence) || (sentence.match(/\bor\b/gi) || []).length >= 2
+      if (!(tooLong && multi)) {
         const canon = canonicalizeQuestionText(sentence)
-        const key = normalizeQuestion(canon.short)
+        const key = normalizeQuestion(`${source}:${canon.short}`)
         if (key && !questionKeysRef.current.has(key)) {
           questionKeysRef.current.add(key)
           setQuestions((prev) => [
             {
               id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+              source,
               question: canon.short,
               rawQuestion: canon.full,
               context: '',
@@ -231,26 +262,27 @@ export default function App() {
           ])
         }
       }
+    }
 
-      const urgent = looksLikeQuestionSentence(sentence)
-      if (urgent) urgentAnalyzeRef.current = true
-      scheduleAnalyze({ urgent })
-    },
-    onError: (msg) => setLocalError(msg || 'Realtime error'),
-  })
+    const urgent = looksLikeQuestionSentence(sentence)
+    if (urgent) urgentAnalyzeRef.current[source] = true
+    scheduleAnalyze({ urgent, source })
+  }
 
-  const fullTranscriptRef = useRef('')
+  const fullTranscriptRef = useRef({ participants: '', host: '' })
   const questionKeysRef = useRef(new Set())
   const timerRef = useRef(null)
-  const analyzeTimerRef = useRef(null)
-  const sentencesSinceAnalysisRef = useRef(0)
-  const lastAnalyzeAtRef = useRef(0)
-  const urgentAnalyzeRef = useRef(false)
+  const analyzeTimerRef = useRef({ participants: null, host: null })
+  const sentencesSinceAnalysisRef = useRef({ participants: 0, host: 0 })
+  const lastAnalyzeAtRef = useRef({ participants: 0, host: 0 })
+  const urgentAnalyzeRef = useRef({ participants: false, host: false })
   const isStoppingRef = useRef(false)
   const wordCountRef = useRef(0)
   const [wordCount, setWordCount] = useState(0)
 
-  const combinedError = useMemo(() => localError || captureError, [captureError, localError])
+  const combinedError = useMemo(() => {
+    return localError || participantsCapture.error || hostCapture.error || ''
+  }, [hostCapture.error, localError, participantsCapture.error])
 
   useEffect(() => {
     const k = 'zqt_seen_howto'
@@ -277,39 +309,42 @@ export default function App() {
   useEffect(() => {
     return () => {
       try {
-        disconnect()
+        participantsWS.disconnect()
+        hostWS.disconnect()
       } catch {}
       try {
-        stopCapture()
+        participantsCapture.stop()
+        hostCapture.stop()
       } catch {}
     }
-  }, [disconnect, stopCapture])
+  }, [])
 
-  const scheduleAnalyze = ({ urgent } = {}) => {
-    if (analyzeTimerRef.current) clearTimeout(analyzeTimerRef.current)
-    analyzeTimerRef.current = setTimeout(() => {
-      analyzeTimerRef.current = null
-      analyzeForQuestions().catch(() => {})
-    }, 3000)
+  const scheduleAnalyze = ({ urgent, source } = {}) => {
+    const src = source || 'participants'
+    if (analyzeTimerRef.current[src]) clearTimeout(analyzeTimerRef.current[src])
+    analyzeTimerRef.current[src] = setTimeout(() => {
+      analyzeTimerRef.current[src] = null
+      analyzeForQuestions(src).catch(() => {})
+    }, urgent ? 600 : 900)
   }
 
-  async function analyzeForQuestions() {
+  async function analyzeForQuestions(source) {
     if (isStoppingRef.current) return
     if (isAnalyzing) return
     const now = Date.now()
-    // Cost guard: never more than once per 3s.
-    if (now - lastAnalyzeAtRef.current < 3000) return
-    const urgent = urgentAnalyzeRef.current
+    // Cost guard: per-source, faster but bounded.
+    if (now - lastAnalyzeAtRef.current[source] < 1200) return
+    const urgent = urgentAnalyzeRef.current[source]
     // Always allow after 1 completed sentence; urgent just uses shorter debounce.
-    if (!urgent && sentencesSinceAnalysisRef.current < 1) return
-    if (urgent && sentencesSinceAnalysisRef.current < 1) return
-    lastAnalyzeAtRef.current = now
-    urgentAnalyzeRef.current = false
+    if (!urgent && sentencesSinceAnalysisRef.current[source] < 1) return
+    if (urgent && sentencesSinceAnalysisRef.current[source] < 1) return
+    lastAnalyzeAtRef.current[source] = now
+    urgentAnalyzeRef.current[source] = false
 
     setIsAnalyzing(true)
     try {
       setLastAnalysisError('')
-      const t = fullTranscriptRef.current
+      const t = fullTranscriptRef.current[source] || ''
       const recent = t.slice(-2000)
       const found = await extractQuestions(recent)
       if (found?.length) {
@@ -317,12 +352,12 @@ export default function App() {
           const next = [...prev]
           for (const item of found) {
             const canon = canonicalizeQuestionText(item.question)
-            const key = normalizeQuestion(canon.short)
+            const key = normalizeQuestion(`${source}:${canon.short}`)
             if (!key) continue
 
             if (questionKeysRef.current.has(key)) {
               // Merge upgrade: replace existing heuristic entry with richer GPT type/context.
-              const idx = next.findIndex((q) => normalizeQuestion(q.question) === key)
+              const idx = next.findIndex((q) => normalizeQuestion(`${q.source}:${q.question}`) === key)
               if (idx !== -1) {
                 next[idx] = {
                   ...next[idx],
@@ -338,6 +373,7 @@ export default function App() {
             questionKeysRef.current.add(key)
             next.push({
               id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+              source,
               question: canon.short,
               rawQuestion: canon.full,
               context: item.context,
@@ -348,11 +384,13 @@ export default function App() {
           }
           const pruned = pruneRedundantQuestions(next)
           // Rebuild dedupe set from pruned list.
-          questionKeysRef.current = new Set(pruned.map((q) => normalizeQuestion(q.question)).filter(Boolean))
+          questionKeysRef.current = new Set(
+            pruned.map((q) => normalizeQuestion(`${q.source}:${q.question}`)).filter(Boolean),
+          )
           return pruned
         })
       }
-      sentencesSinceAnalysisRef.current = 0
+      sentencesSinceAnalysisRef.current[source] = 0
       setLastAnalysisAt(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }))
     } catch (e) {
       const msg = e?.message || 'Question extraction failed.'
@@ -366,39 +404,72 @@ export default function App() {
   async function handleStart() {
     setLocalError('')
     setQuestions([])
-    setFullTranscript('')
-    setInterimText('')
+    setFullTranscript({ participants: '', host: '' })
+    setInterimText({ participants: '', host: '' })
     setElapsedSeconds(0)
-    fullTranscriptRef.current = ''
+    fullTranscriptRef.current = { participants: '', host: '' }
     questionKeysRef.current = new Set()
     setIsAnalyzing(false)
     setWordCount(0)
     wordCountRef.current = 0
-    sentencesSinceAnalysisRef.current = 0
+    sentencesSinceAnalysisRef.current = { participants: 0, host: 0 }
       setLastAnalysisAt('')
       setLastAnalysisError('')
     isStoppingRef.current = false
 
     try {
       setStatus('connecting')
-      await startCapture()
-      connect()
-      audioCbRef.current = (b64) => sendAudio(b64)
+      if (captureSources.participants) {
+        if (!participantsCapture.isCapturing) await participantsCapture.start({ source: 'tab' })
+        participantsWS.connect()
+        participantsAudioCbRef.current = (b64) => participantsWS.sendAudio(b64)
+      } else {
+        participantsCapture.stop()
+        participantsWS.disconnect()
+      }
+
+      if (captureSources.host) {
+        if (!hostCapture.isCapturing) await hostCapture.start({ source: 'mic' })
+        hostWS.connect()
+        hostAudioCbRef.current = (b64) => hostWS.sendAudio(b64)
+      } else {
+        hostCapture.stop()
+        hostWS.disconnect()
+      }
+
       setStatus('live')
     } catch (e) {
       setLocalError(e?.message || 'Failed to start.')
-      stopCapture()
-      disconnect()
+      participantsCapture.stop()
+      hostCapture.stop()
+      participantsWS.disconnect()
+      hostWS.disconnect()
+      setStatus('idle')
+    }
+  }
+
+  async function handleGetStarted() {
+    setLocalError('')
+    try {
+      // First prompt: tab capture (participants). Required gesture.
+      await participantsCapture.start({ source: 'tab' })
+      setStatus('setup')
+    } catch (e) {
+      setLocalError(e?.message || 'Failed to start capture.')
+      participantsCapture.stop()
       setStatus('idle')
     }
   }
 
   function handleStop() {
     isStoppingRef.current = true
-    if (analyzeTimerRef.current) clearTimeout(analyzeTimerRef.current)
-    analyzeTimerRef.current = null
-    stopCapture()
-    disconnect()
+    if (analyzeTimerRef.current.participants) clearTimeout(analyzeTimerRef.current.participants)
+    if (analyzeTimerRef.current.host) clearTimeout(analyzeTimerRef.current.host)
+    analyzeTimerRef.current = { participants: null, host: null }
+    participantsCapture.stop()
+    hostCapture.stop()
+    participantsWS.disconnect()
+    hostWS.disconnect()
     setStatus('stopped')
   }
 
@@ -422,114 +493,83 @@ export default function App() {
 
   if (status === 'idle') {
     return (
-      <div className="appShell">
+      <div className="app-wrapper">
         {showHowTo ? <HowToModal onClose={() => setShowHowTo(false)} /> : null}
-        <StartScreen onStart={handleStart} error={combinedError} onShowHowTo={() => setShowHowTo(true)} />
+        <StartScreen onStart={handleGetStarted} error={combinedError} />
       </div>
     )
   }
 
-  if (status === 'stopped') {
+  if (status === 'setup') {
     return (
-      <div className="appShell">
-        <StatusBar
-        isLive={false}
-          elapsedSeconds={elapsedSeconds}
-          questionCount={questions.length}
-          isAnalyzing={false}
-          wordCount={wordCount}
+      <div className="app-wrapper">
+        <SetupScreen
+          captureSources={captureSources}
+          setCaptureSources={setCaptureSources}
+          onStart={handleStart}
+          onBack={() => {
+            participantsCapture.stop()
+            hostCapture.stop()
+            participantsWS.disconnect()
+            hostWS.disconnect()
+            setStatus('idle')
+          }}
+          disabled={false}
+          error={combinedError}
         />
-        <div className="main">
-          <div className="grid">
-            <div className="panel">
-              <div className="panelHeader">
-                <div className="panelTitle">Transcript</div>
-              </div>
-              <div className="panelBody">
-                <div className="muted" style={{ whiteSpace: 'pre-wrap' }}>
-                  {fullTranscript || '(empty)'}
-                </div>
-              </div>
-            </div>
-
-          <QuestionFeed
-            questions={questions}
-            isLoading={false}
-            lastAnalysisAt={lastAnalysisAt}
-            lastAnalysisError={lastAnalysisError}
-          />
-          </div>
-
-          <div className="btnRow">
-            <button className="btnGhost" type="button" onClick={() => setShowHowTo(true)}>
-              How to use
-            </button>
-            <button className="btnPrimary" type="button" onClick={handleExport} disabled={questions.length === 0}>
-              Export
-            </button>
-            <button className="btnPrimary" type="button" onClick={handleNewSession}>
-              Start New Session
-            </button>
-          </div>
-
-          {combinedError ? <div className="errorText">{combinedError}</div> : null}
-        </div>
-        {showHowTo ? <HowToModal onClose={() => setShowHowTo(false)} /> : null}
       </div>
     )
   }
+
+  const capturingOk =
+    status === 'live' &&
+    ((captureSources.participants && participantsCapture.isCapturing && participantsWS.isConnected) ||
+      (captureSources.host && hostCapture.isCapturing && hostWS.isConnected))
+  const isCapturing = participantsCapture.isCapturing || hostCapture.isCapturing
+  const canStart = captureSources.participants || captureSources.host
 
   return (
-    <div className="appShell">
+    <div className="app-wrapper">
       <StatusBar
-        isLive={status === 'live' && isCapturing && isConnected}
+        isCapturing={capturingOk}
+        status={status}
         elapsedSeconds={elapsedSeconds}
-        questionCount={questions.length}
         isAnalyzing={isAnalyzing}
-        wordCount={wordCount}
       />
 
-      <div className="main">
-        <div className="grid">
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div className="panel">
-              <div className="panelHeader">
-                <div className="panelTitle">Controls</div>
-              </div>
-              <div className="panelBody">
-                <div className="muted">
-                  Tip: in share dialog, pick Zoom tab and enable <span className="kbd">Share tab audio</span>.
-                </div>
-                <div className="btnRow" style={{ justifyContent: 'flex-start' }}>
-                  <button className="btnDanger" onClick={handleStop} type="button">
-                    Stop
-                  </button>
-                  <button className="btnGhost" onClick={() => setShowHowTo(true)} type="button">
-                    How to use
-                  </button>
-                  <button className="btnGhost" onClick={() => setIsTranscriptCollapsed((v) => !v)} type="button">
-                    {isTranscriptCollapsed ? 'Show transcript' : 'Hide transcript'}
-                  </button>
-                </div>
-                {combinedError ? <div className="errorText">{combinedError}</div> : null}
-              </div>
-            </div>
-
-            <TranscriptPanel
-              transcript={fullTranscript}
-              interimText={interimText}
-              isCollapsed={isTranscriptCollapsed}
-              onToggle={() => setIsTranscriptCollapsed((v) => !v)}
-            />
-          </div>
-
-          <QuestionFeed
-            questions={questions}
-            isLoading={isAnalyzing || questions.length === 0}
-            lastAnalysisAt={lastAnalysisAt}
-            lastAnalysisError={lastAnalysisError}
-          />
+      <div className="controls-bar">
+        <div className="controls-header">
+          <span className="app-name">Question Tracker</span>
+          <span className="app-tag">ZOOM MEETING LISTENER</span>
         </div>
+        <div className="controls-buttons">
+          <div className="controls-actions">
+            <button className="btn-stop" onClick={handleStop} disabled={!isCapturing}>
+              <span>■</span> Stop
+            </button>
+            <button className="btn-export" onClick={handleExport} disabled={questions.length === 0}>
+              <span>↓</span> Export
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {combinedError ? <div className="error-toast">{combinedError}</div> : null}
+
+      <div className="main-content">
+        <TranscriptPanel
+          transcript={fullTranscript}
+          interimText={interimText}
+          isCollapsed={isTranscriptCollapsed}
+          onToggle={() => setIsTranscriptCollapsed((v) => !v)}
+        />
+
+        <QuestionFeed
+          questions={questions}
+          isLoading={isAnalyzing || questions.length === 0}
+          lastAnalysisAt={lastAnalysisAt}
+          lastAnalysisError={lastAnalysisError}
+        />
       </div>
 
       {showHowTo ? <HowToModal onClose={() => setShowHowTo(false)} /> : null}

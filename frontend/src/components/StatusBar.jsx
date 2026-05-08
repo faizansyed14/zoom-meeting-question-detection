@@ -6,21 +6,25 @@ function fmt(secs) {
   return `${m}:${s}`
 }
 
-export default function StatusBar({ isLive, elapsedSeconds, questionCount, wordCount, isAnalyzing }) {
+export default function StatusBar({ isCapturing, status, isAnalyzing, elapsedSeconds }) {
+  const elapsed = fmt(elapsedSeconds || 0)
+  const statusMessage =
+    status === 'stopped' ? 'Stopped' : status === 'connecting' ? 'Connecting…' : isCapturing ? 'Live — capturing Zoom audio' : 'Idle'
+
   return (
-    <div className="statusBar">
-      <div className="statusLeft">
-        <span className={`dot ${isLive ? 'dotGreen' : 'dotRed'}`} />
-        <span className="statusText">{isLive ? 'Live — capturing Zoom audio' : 'Stopped'}</span>
+    <div className={`status-bar ${isCapturing ? 'status-live' : status === 'stopped' ? 'status-stopped' : ''}`}>
+      <div className="status-left">
+        <div className={`status-dot ${isCapturing ? 'dot-live' : status === 'stopped' ? 'dot-stopped' : 'dot-idle'}`} />
+        <span className="status-text">{statusMessage}</span>
       </div>
-
-      <div className="statusCenter">{fmt(elapsedSeconds || 0)}</div>
-
-      <div className="statusRight">
-        <span className="muted">{questionCount || 0} questions</span>
-        <span className="sep" />
-        <span className="muted">{(wordCount || 0).toLocaleString()} words</span>
-        {isAnalyzing ? <span className="spinner" aria-label="Analyzing" /> : null}
+      <div className="status-right">
+        {isAnalyzing && (
+          <div className="analyzing-badge">
+            <div className="analyzing-spinner" />
+            Analyzing
+          </div>
+        )}
+        {isCapturing && <span className="status-timer">{elapsed}</span>}
       </div>
     </div>
   )
