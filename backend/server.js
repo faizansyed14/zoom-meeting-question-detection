@@ -10,7 +10,7 @@ import cors from 'cors'
 import http from 'http'
 import { WebSocketServer } from 'ws'
 import session from 'express-session'
-import rateLimit from 'express-rate-limit'
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit'
 import { createOpenAIRelay } from './openaiRelay.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -61,7 +61,7 @@ const loginLimiter = rateLimit({
   legacyHeaders: false,
   message: { error: 'too_many_requests' },
   keyGenerator: (req) => {
-    const ip = req.ip || 'ip'
+    const ip = ipKeyGenerator(req.ip || '')
     const email = String(req.body?.email || '').trim().toLowerCase()
     return `${ip}:${email || 'noemail'}`
   },
