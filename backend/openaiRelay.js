@@ -19,6 +19,12 @@ function sendJson(ws, obj) {
 }
 
 export function createOpenAIRelay(browserWs) {
+  let onOpenAIMessage = null
+  let onOpenAIMessageRaw = null
+  if (arguments.length >= 2 && arguments[1] && typeof arguments[1] === 'object') {
+    onOpenAIMessage = arguments[1].onOpenAIMessage || null
+    onOpenAIMessageRaw = arguments[1].onOpenAIMessageRaw || null
+  }
   let openaiWs = null
   let closed = false
   let didReconnect = false
@@ -62,11 +68,17 @@ export function createOpenAIRelay(browserWs) {
     openaiWs.on('message', (data) => {
       const txt = data.toString()
       forward(txt)
+      try {
+        onOpenAIMessageRaw?.(txt)
+      } catch {}
 
       // If server indicates this connection is treated as a realtime (non-transcription) session,
       // fall back to session.update schema (observed in some environments).
       try {
         const msg = JSON.parse(txt)
+        try {
+          onOpenAIMessage?.(msg)
+        } catch {}
         if (
           msg?.type === 'error' &&
           typeof msg?.error?.message === 'string' &&

@@ -1,4 +1,5 @@
 import React from 'react'
+import { motion } from 'framer-motion'
 
 export default function SetupScreen({
   captureSources,
@@ -19,9 +20,9 @@ export default function SetupScreen({
               Toggle what to transcribe. By default, both are on.
             </div>
           </div>
-          <button className="btn-export" type="button" onClick={onBack}>
+          <motion.button className="btn-export" type="button" onClick={onBack} whileTap={{ scale: 0.96 }}>
             Back
-          </button>
+          </motion.button>
         </div>
 
         <div className="setup-toggles">
@@ -69,10 +70,15 @@ export default function SetupScreen({
                   : 'Select at least one source.'}
           </div>
 
-          <button className="btn-start-main" onClick={onStart} disabled={!captureSources.participants && !captureSources.host}>
+          <motion.button
+            className="btn-start-main"
+            onClick={onStart}
+            disabled={!captureSources.participants && !captureSources.host}
+            whileTap={{ scale: 0.96 }}
+          >
             <span className="btn-icon">▶</span>
             Start Listening
-          </button>
+          </motion.button>
 
           {error ? <div className="start-error">{error}</div> : null}
         </div>

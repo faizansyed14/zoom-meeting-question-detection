@@ -1,4 +1,5 @@
 import React from 'react'
+import { AnimatePresence, motion } from 'framer-motion'
 
 function fmt(secs) {
   const m = String(Math.floor(secs / 60)).padStart(2, '0')
@@ -18,12 +19,19 @@ export default function StatusBar({ isCapturing, status, isAnalyzing, elapsedSec
         <span className="status-text">{statusMessage}</span>
       </div>
       <div className="status-right">
-        {isAnalyzing && (
-          <div className="analyzing-badge">
-            <div className="analyzing-spinner" />
-            Analyzing
-          </div>
-        )}
+        <AnimatePresence initial={false}>
+          {isAnalyzing ? (
+            <motion.div
+              className="analyzing-badge"
+              initial={{ opacity: 0, scale: 0.85 }}
+              animate={{ opacity: 1, scale: 1 }}
+              exit={{ opacity: 0, scale: 0.85 }}
+            >
+              <div className="analyzing-spinner" />
+              Analyzing
+            </motion.div>
+          ) : null}
+        </AnimatePresence>
         {isCapturing && <span className="status-timer">{elapsed}</span>}
       </div>
     </div>

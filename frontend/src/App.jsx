@@ -6,7 +6,8 @@ import QuestionFeed from './components/QuestionFeed.jsx'
 import { useRealtimeWS } from './hooks/useRealtimeWS.js'
 import { extractQuestions } from './utils/openai.js'
 import { useAudioCapture } from './hooks/useAudioCapture.js'
-import SetupScreen from './components/SetupScreen.jsx'
+import { motion } from 'framer-motion'
+import LoginScreen from './components/LoginScreen.jsx'
 
 function nowStamp() {
   const d = new Date()
@@ -173,7 +174,13 @@ function HowToModal({ onClose }) {
 }
 
 export default function App() {
-  const [status, setStatus] = useState('idle') // idle | setup | connecting | live | stopped
+  const [authChecked, setAuthChecked] = useState(false)
+  const [authedEmail, setAuthedEmail] = useState('')
+  const [authedRole, setAuthedRole] = useState('')
+  const [authError, setAuthError] = useState('')
+  const [authBusy, setAuthBusy] = useState(false)
+
+  const [status, setStatus] = useState('idle') // idle | connecting | live | stopped
   const [questions, setQuestions] = useState([])
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [fullTranscript, setFullTranscript] = useState({ participants: '', host: '' })
@@ -197,6 +204,7 @@ export default function App() {
   })
 
   const participantsWS = useRealtimeWS({
+    path: '/transcribe?source=participants',
     onTranscriptDelta: (delta) => {
       if (!delta) return
       const clean = sanitizeEnglishUi(delta)
@@ -210,6 +218,7 @@ export default function App() {
   })
 
   const hostWS = useRealtimeWS({
+    path: '/transcribe?source=host',
     onTranscriptDelta: (delta) => {
       if (!delta) return
       const clean = sanitizeEnglishUi(delta)
@@ -220,6 +229,44 @@ export default function App() {
     },
     onTranscriptCompleted: (t) => handleTranscriptCompleted('host', t),
     onError: (msg) => setLocalError(msg || 'Realtime error'),
+  })
+
+  const watchWS = useRealtimeWS({
+    path: '/watch',
+    onMessage: (msg) => {
+      if (!msg) return
+      if (msg.type === 'state.snapshot') {
+        setFullTranscript({
+          participants: String(msg?.transcript?.participants || ''),
+          host: String(msg?.transcript?.host || ''),
+        })
+        setInterimText({ participants: '', host: '' })
+        setQuestions(Array.isArray(msg?.questions) ? msg.questions : [])
+        return
+      }
+      if (msg.type === 'questions.update') {
+        setQuestions(Array.isArray(msg?.questions) ? msg.questions : [])
+        return
+      }
+      if (msg.type === 'transcript.completed') {
+        const source = msg.source === 'host' ? 'host' : 'participants'
+        const sentence = sanitizeEnglishUi(msg.transcript || '')
+        if (!sentence) return
+        setFullTranscript((prev) => ({
+          ...prev,
+          [source]: prev[source] ? `${prev[source]}\n${sentence}` : sentence,
+        }))
+        setInterimText((prev) => ({ ...prev, [source]: '' }))
+        return
+      }
+      if (msg.type === 'transcript.delta') {
+        const source = msg.source === 'host' ? 'host' : 'participants'
+        const clean = sanitizeEnglishUi(msg.delta || '')
+        if (!clean) return
+        setInterimText((t) => ({ ...t, [source]: appendSmooth(t[source], clean).slice(-5000) }))
+      }
+    },
+    onError: (msg) => setLocalError(msg || 'Watch WS error'),
   })
 
   function handleTranscriptCompleted(source, t) {
@@ -285,6 +332,76 @@ export default function App() {
   }, [hostCapture.error, localError, participantsCapture.error])
 
   useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const res = await fetch('/auth/me', { credentials: 'include' })
+        if (!res.ok) throw new Error('unauthorized')
+        const data = await res.json().catch(() => ({}))
+        if (cancelled) return
+        setAuthedEmail(String(data?.email || ''))
+        setAuthedRole(String(data?.role || ''))
+        setAuthError('')
+      } catch {
+        if (cancelled) return
+        setAuthedEmail('')
+        setAuthedRole('')
+      } finally {
+        if (cancelled) return
+        setAuthChecked(true)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  async function handleLogin({ email, password }) {
+    setAuthBusy(true)
+    setAuthError('')
+    try {
+      const res = await fetch('/auth/login', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password }),
+      })
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}))
+        const msg =
+          data?.error === 'too_many_requests'
+            ? 'Too many attempts. Wait a bit.'
+            : data?.error === 'invalid_credentials'
+              ? 'Invalid email or password.'
+              : 'Login failed.'
+        throw new Error(msg)
+      }
+      const me = await fetch('/auth/me', { credentials: 'include' })
+      const data = await me.json().catch(() => ({}))
+      setAuthedEmail(String(data?.email || email || ''))
+      setAuthedRole(String(data?.role || ''))
+      setAuthError('')
+    } catch (e) {
+      setAuthedEmail('')
+      setAuthedRole('')
+      setAuthError(e?.message || 'Login failed.')
+    } finally {
+      setAuthBusy(false)
+      setAuthChecked(true)
+    }
+  }
+
+  async function handleLogout() {
+    try {
+      await fetch('/auth/logout', { method: 'POST', credentials: 'include' })
+    } catch {}
+    setAuthedEmail('')
+    setAuthedRole('')
+    setAuthError('')
+    setStatus('idle')
+  }
+
+  useEffect(() => {
     const k = 'zqt_seen_howto'
     const seen = localStorage.getItem(k)
     if (!seen) {
@@ -311,6 +428,7 @@ export default function App() {
       try {
         participantsWS.disconnect()
         hostWS.disconnect()
+        watchWS.disconnect()
       } catch {}
       try {
         participantsCapture.stop()
@@ -401,6 +519,20 @@ export default function App() {
     }
   }
 
+  useEffect(() => {
+    if (!authedRole || authedRole !== 'admin') return
+    // Keep viewers in sync with admin-visible questions.
+    const t = setTimeout(() => {
+      fetch('/sync/questions', {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ questions }),
+      }).catch(() => {})
+    }, 350)
+    return () => clearTimeout(t)
+  }, [authedRole, questions])
+
   async function handleStart() {
     setLocalError('')
     setQuestions([])
@@ -448,18 +580,7 @@ export default function App() {
     }
   }
 
-  async function handleGetStarted() {
-    setLocalError('')
-    try {
-      // First prompt: tab capture (participants). Required gesture.
-      await participantsCapture.start({ source: 'tab' })
-      setStatus('setup')
-    } catch (e) {
-      setLocalError(e?.message || 'Failed to start capture.')
-      participantsCapture.stop()
-      setStatus('idle')
-    }
-  }
+  // StartScreen button now calls handleStart directly.
 
   function handleStop() {
     isStoppingRef.current = true
@@ -491,42 +612,71 @@ export default function App() {
     setPhase('idle')
   }
 
-  if (status === 'idle') {
-    return (
-      <div className="app-wrapper">
-        {showHowTo ? <HowToModal onClose={() => setShowHowTo(false)} /> : null}
-        <StartScreen onStart={handleGetStarted} error={combinedError} />
-      </div>
-    )
-  }
-
-  if (status === 'setup') {
-    return (
-      <div className="app-wrapper">
-        <SetupScreen
-          captureSources={captureSources}
-          setCaptureSources={setCaptureSources}
-          onStart={handleStart}
-          onBack={() => {
-            participantsCapture.stop()
-            hostCapture.stop()
-            participantsWS.disconnect()
-            hostWS.disconnect()
-            setStatus('idle')
-          }}
-          disabled={false}
-          error={combinedError}
-        />
-      </div>
-    )
-  }
-
   const capturingOk =
     status === 'live' &&
     ((captureSources.participants && participantsCapture.isCapturing && participantsWS.isConnected) ||
       (captureSources.host && hostCapture.isCapturing && hostWS.isConnected))
   const isCapturing = participantsCapture.isCapturing || hostCapture.isCapturing
   const canStart = captureSources.participants || captureSources.host
+
+  if (!authChecked) {
+    return <LoginScreen onLogin={handleLogin} error={''} busy={true} defaultEmail="zoomadmin@alpha.ae" />
+  }
+
+  if (!authedEmail) {
+    return <LoginScreen onLogin={handleLogin} error={authError} busy={authBusy} defaultEmail="zoomadmin@alpha.ae" />
+  }
+
+  if (authedRole && authedRole !== 'admin') {
+    if (!watchWS.isConnected) watchWS.connect()
+    return (
+      <div className="app-wrapper">
+        <StatusBar isCapturing={false} status={'live'} elapsedSeconds={elapsedSeconds} isAnalyzing={false} />
+
+        <div className="controls-bar">
+          <div className="controls-header">
+            <span className="app-name">Question Tracker</span>
+            <span className="app-tag">VIEW ONLY</span>
+          </div>
+          <div className="controls-buttons">
+            <div className="controls-actions">
+              <motion.button className="btn-export" onClick={handleLogout} whileTap={{ scale: 0.96 }}>
+                Logout
+              </motion.button>
+            </div>
+          </div>
+        </div>
+
+        {combinedError ? <div className="error-toast">{combinedError}</div> : null}
+
+        <div className="main-content">
+          <TranscriptPanel
+            transcript={fullTranscript}
+            interimText={interimText}
+            isCollapsed={isTranscriptCollapsed}
+            onToggle={() => setIsTranscriptCollapsed((v) => !v)}
+          />
+
+          <QuestionFeed questions={questions} isLoading={false} lastAnalysisAt={''} lastAnalysisError={''} />
+        </div>
+      </div>
+    )
+  }
+
+  if (status === 'idle') {
+    return (
+      <div className="app-wrapper">
+        {showHowTo ? <HowToModal onClose={() => setShowHowTo(false)} /> : null}
+        <StartScreen
+          captureSources={captureSources}
+          setCaptureSources={setCaptureSources}
+          onStart={handleStart}
+          error={combinedError}
+          disabled={false}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="app-wrapper">
@@ -544,12 +694,20 @@ export default function App() {
         </div>
         <div className="controls-buttons">
           <div className="controls-actions">
-            <button className="btn-stop" onClick={handleStop} disabled={!isCapturing}>
+            <motion.button className="btn-stop" onClick={handleStop} disabled={!isCapturing} whileTap={{ scale: 0.96 }}>
               <span>■</span> Stop
-            </button>
-            <button className="btn-export" onClick={handleExport} disabled={questions.length === 0}>
+            </motion.button>
+            <motion.button
+              className="btn-export"
+              onClick={handleExport}
+              disabled={questions.length === 0}
+              whileTap={{ scale: 0.96 }}
+            >
               <span>↓</span> Export
-            </button>
+            </motion.button>
+            <motion.button className="btn-export" onClick={handleLogout} whileTap={{ scale: 0.96 }}>
+              Logout
+            </motion.button>
           </div>
         </div>
       </div>

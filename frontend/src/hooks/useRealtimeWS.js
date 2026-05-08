@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 
-export function useRealtimeWS({ onTranscriptDelta, onTranscriptCompleted, onError } = {}) {
+export function useRealtimeWS({ path = '/transcribe', onTranscriptDelta, onTranscriptCompleted, onError, onMessage } = {}) {
   const [isConnected, setIsConnected] = useState(false)
   const wsRef = useRef(null)
 
@@ -10,7 +10,7 @@ export function useRealtimeWS({ onTranscriptDelta, onTranscriptCompleted, onErro
     }
 
     const proto = window.location.protocol === 'https:' ? 'wss' : 'ws'
-    const url = `${proto}://${window.location.host}/transcribe`
+    const url = `${proto}://${window.location.host}${path}`
     const ws = new WebSocket(url)
     wsRef.current = ws
 
@@ -29,6 +29,7 @@ export function useRealtimeWS({ onTranscriptDelta, onTranscriptCompleted, onErro
         return
       }
 
+      onMessage?.(msg)
       const type = msg?.type
       if (type === 'conversation.item.input_audio_transcription.delta') {
         onTranscriptDelta?.(msg.delta || '')
@@ -43,7 +44,7 @@ export function useRealtimeWS({ onTranscriptDelta, onTranscriptCompleted, onErro
         return
       }
     }
-  }, [onError, onTranscriptCompleted, onTranscriptDelta])
+  }, [onError, onMessage, onTranscriptCompleted, onTranscriptDelta, path])
 
   const sendAudio = useCallback((base64) => {
     const ws = wsRef.current

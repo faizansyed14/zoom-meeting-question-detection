@@ -1,7 +1,21 @@
 import React, { useEffect, useMemo, useRef } from 'react'
+import { TypeAnimation } from 'react-type-animation'
 
 export default function TranscriptPanel({ transcript, interimText, isCollapsed, onToggle }) {
   const scrollRef = useRef(null)
+  const participantsSentences = useMemo(() => {
+    return String(transcript?.participants || '')
+      .split(/\n+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+  }, [transcript?.participants])
+
+  const hostSentences = useMemo(() => {
+    return String(transcript?.host || '')
+      .split(/\n+/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+  }, [transcript?.host])
   const wordCount = useMemo(() => {
     const p = `${transcript?.participants || ''} ${interimText?.participants || ''}`.trim()
     const h = `${transcript?.host || ''} ${interimText?.host || ''}`.trim()
@@ -32,7 +46,11 @@ export default function TranscriptPanel({ transcript, interimText, isCollapsed, 
               <span className="label">Participants</span>
             </div>
             <div className="transcript-line">
-              <span className="transcript-final">{transcript?.participants || ''}</span>
+              <span className="transcript-final">
+                {participantsSentences.map((s, idx) => (
+                  <TypeAnimation key={`p-${idx}`} sequence={[s]} speed={85} cursor={false} repeat={0} />
+                ))}
+              </span>
               {interimText?.participants ? (
                 <span className="transcript-interim"> {interimText.participants}</span>
               ) : null}
@@ -46,7 +64,11 @@ export default function TranscriptPanel({ transcript, interimText, isCollapsed, 
               <span className="label">Host</span>
             </div>
             <div className="transcript-line">
-              <span className="transcript-final">{transcript?.host || ''}</span>
+              <span className="transcript-final">
+                {hostSentences.map((s, idx) => (
+                  <TypeAnimation key={`h-${idx}`} sequence={[s]} speed={85} cursor={false} repeat={0} />
+                ))}
+              </span>
               {interimText?.host ? <span className="transcript-interim"> {interimText.host}</span> : null}
             </div>
           </div>
