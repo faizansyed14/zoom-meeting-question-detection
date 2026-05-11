@@ -102,6 +102,11 @@ function extractLastQuestionFragment(liveText) {
   return frag
 }
 
+function questionKey(source, canon) {
+  const full = canon?.full || canon?.short || ''
+  return normalizeQuestion(`${source}:${full}`)
+}
+
 function pruneRedundantQuestions(items) {
   const qs = [...items]
   // Prefer non-'other' and shorter questions.
@@ -191,6 +196,7 @@ export default function App() {
   const [status, setStatus] = useState('idle') // idle | connecting | live | stopped
   const [allQuestions, setAllQuestions] = useState([])
   const [approvedQuestions, setApprovedQuestions] = useState([])
+  const [autoShareAll, setAutoShareAll] = useState(false)
   const [answeredQuestions, setAnsweredQuestions] = useState([])
   const [isAnalyzing, setIsAnalyzing] = useState(false)
   const [fullTranscript, setFullTranscript] = useState({ participants: '', host: '' })
@@ -306,7 +312,7 @@ export default function App() {
     // Hybrid: instant add on question-like completed sentence + LLM backfill scan
     if (!isAudioCheckFormalities(sentence) && looksLikeQuestionSentence(sentence)) {
       const canon = canonicalizeQuestionText(sentence)
-      const key = normalizeQuestion(`${source}:${canon.short}`)
+      const key = questionKey(source, canon)
       if (key && !questionKeysRef.current.has(key)) {
         questionKeysRef.current.add(key)
         setAllQuestions((prev) => [
@@ -363,9 +369,20 @@ export default function App() {
             const next = [...prev]
             for (const item of found) {
               const canon = canonicalizeQuestionText(item.question)
-              const key = normalizeQuestion(`${source}:${canon.short}`)
+              const key = questionKey(source, canon)
               if (!key) continue
-              if (questionKeysRef.current.has(key)) continue
+              if (questionKeysRef.current.has(key)) {
+                const idx = next.findIndex((q) => normalizeQuestion(`${q.source}:${q.rawQuestion || q.question}`) === key)
+                if (idx !== -1) {
+                  next[idx] = {
+                    ...next[idx],
+                    question: canon.short || next[idx].question,
+                    rawQuestion: canon.full || next[idx].rawQuestion,
+                    about: item.about || next[idx].about || '',
+                  }
+                }
+                continue
+              }
               questionKeysRef.current.add(key)
               next.push({
                 id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
@@ -439,13 +456,15 @@ export default function App() {
 
   function markAnswered(q) {
     if (!q?.question) return
-    const key = normalizeQuestion(`${q.source || 'participants'}:${q.question}`)
+    const key = normalizeQuestion(`${q.source || 'participants'}:${q.rawQuestion || q.question}`)
     answeredKeysRef.current.add(key)
     setApprovedQuestions((prev) =>
-      prev.filter((x) => normalizeQuestion(`${x.source || 'participants'}:${x.question || ''}`) !== key),
+      prev.filter((x) => normalizeQuestion(`${x.source || 'participants'}:${x.rawQuestion || x.question || ''}`) !== key),
     )
     setAnsweredQuestions((prev) => {
-      const exists = prev.some((x) => normalizeQuestion(`${x.source || 'participants'}:${x.question || ''}`) === key)
+      const exists = prev.some(
+        (x) => normalizeQuestion(`${x.source || 'participants'}:${x.rawQuestion || x.question || ''}`) === key,
+      )
       if (exists) return prev
       return [{ ...q, answeredAtMs: Date.now() }, ...prev]
     })
@@ -453,19 +472,39 @@ export default function App() {
 
   function approveQuestion(q) {
     if (!q?.question) return
-    const key = normalizeQuestion(`${q.source || 'participants'}:${q.question}`)
+    const key = normalizeQuestion(`${q.source || 'participants'}:${q.rawQuestion || q.question}`)
     setApprovedQuestions((prev) => {
-      const exists = prev.some((x) => normalizeQuestion(`${x.source || 'participants'}:${x.question}`) === key)
+      const exists = prev.some(
+        (x) => normalizeQuestion(`${x.source || 'participants'}:${x.rawQuestion || x.question || ''}`) === key,
+      )
       if (exists) return prev
-      return [{ ...q }, ...prev]
+      return pruneRedundantQuestions([{ ...q }, ...prev])
     })
   }
 
+  useEffect(() => {
+    const k = 'zqt_auto_share_all'
+    const v = localStorage.getItem(k)
+    if (v === '1') setAutoShareAll(true)
+  }, [])
+
+  useEffect(() => {
+    const k = 'zqt_auto_share_all'
+    localStorage.setItem(k, autoShareAll ? '1' : '0')
+  }, [autoShareAll])
+
+  useEffect(() => {
+    if (!autoShareAll) return
+    if (!newestAll.length) return
+    // Auto-approve anything new
+    for (const q of newestAll) approveQuestion(q)
+  }, [autoShareAll, newestAll])
+
   function removeApproved(q) {
     if (!q) return
-    const key = normalizeQuestion(`${q.source || 'participants'}:${q.question || ''}`)
+    const key = normalizeQuestion(`${q.source || 'participants'}:${q.rawQuestion || q.question || ''}`)
     setApprovedQuestions((prev) =>
-      prev.filter((x) => normalizeQuestion(`${x.source || 'participants'}:${x.question || ''}`) !== key),
+      prev.filter((x) => normalizeQuestion(`${x.source || 'participants'}:${x.rawQuestion || x.question || ''}`) !== key),
     )
   }
 
@@ -494,11 +533,12 @@ export default function App() {
     }
   }, [])
 
-  async function handleLogin({ email, password }) {
+  async function handleLogin({ email, password, mode }) {
     setAuthBusy(true)
     setAuthError('')
     try {
-      const res = await fetch('/auth/login', {
+      const endpoint = mode === 'viewer' ? '/auth/login-viewer' : '/auth/login-admin'
+      const res = await fetch(endpoint, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
@@ -608,12 +648,12 @@ export default function App() {
           const next = [...prev]
           for (const item of found) {
             const canon = canonicalizeQuestionText(item.question)
-            const key = normalizeQuestion(`${source}:${canon.short}`)
+            const key = questionKey(source, canon)
             if (!key) continue
 
             if (questionKeysRef.current.has(key)) {
               // Merge upgrade: replace existing heuristic entry with richer LLM about field.
-              const idx = next.findIndex((q) => normalizeQuestion(`${q.source}:${q.question}`) === key)
+              const idx = next.findIndex((q) => normalizeQuestion(`${q.source}:${q.rawQuestion || q.question}`) === key)
               if (idx !== -1) {
                 next[idx] = {
                   ...next[idx],
@@ -639,7 +679,7 @@ export default function App() {
           const pruned = pruneRedundantQuestions(next)
           // Rebuild dedupe set from pruned list.
           questionKeysRef.current = new Set(
-            pruned.map((q) => normalizeQuestion(`${q.source}:${q.question}`)).filter(Boolean),
+            pruned.map((q) => normalizeQuestion(`${q.source}:${q.rawQuestion || q.question}`)).filter(Boolean),
           )
           return pruned
         })
@@ -888,6 +928,22 @@ export default function App() {
             <motion.button className="btn-export" onClick={handleLogout} whileTap={{ scale: 0.96 }}>
               Logout
             </motion.button>
+          </div>
+          <div className="controls-actions" style={{ marginTop: 10 }}>
+            <div className="setup-toggle-row" style={{ width: '100%' }}>
+              <div className="setup-toggle-left">
+                <div className="setup-toggle-name">Auto-share all</div>
+                <div className="setup-toggle-help">Automatically send all detected questions to viewer</div>
+              </div>
+              <button
+                type="button"
+                className={`pill-toggle ${autoShareAll ? 'on' : 'off'}`}
+                onClick={() => setAutoShareAll((v) => !v)}
+                aria-pressed={autoShareAll}
+              >
+                <span className="pill-knob" />
+              </button>
+            </div>
           </div>
         </div>
       </div>

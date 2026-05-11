@@ -98,6 +98,46 @@ app.post('/auth/login', loginLimiter, (req, res) => {
   res.json({ ok: true })
 })
 
+app.post('/auth/login-admin', loginLimiter, (req, res) => {
+  const email = String(req.body?.email || '')
+    .trim()
+    .toLowerCase()
+  const password = String(req.body?.password || '')
+
+  if (!ADMIN_EMAIL || !ADMIN_PASSWORD) {
+    res.status(500).json({ error: 'auth_not_configured' })
+    return
+  }
+
+  if (email !== ADMIN_EMAIL || password !== ADMIN_PASSWORD) {
+    res.status(401).json({ error: 'invalid_credentials' })
+    return
+  }
+
+  req.session.user = { email, role: 'admin' }
+  res.json({ ok: true })
+})
+
+app.post('/auth/login-viewer', loginLimiter, (req, res) => {
+  const email = String(req.body?.email || '')
+    .trim()
+    .toLowerCase()
+  const password = String(req.body?.password || '')
+
+  if (!VIEWER_EMAIL || !VIEWER_PASSWORD) {
+    res.status(500).json({ error: 'auth_not_configured' })
+    return
+  }
+
+  if (email !== VIEWER_EMAIL || password !== VIEWER_PASSWORD) {
+    res.status(401).json({ error: 'invalid_credentials' })
+    return
+  }
+
+  req.session.user = { email, role: 'viewer' }
+  res.json({ ok: true })
+})
+
 app.post('/auth/logout', (req, res) => {
   req.session?.destroy?.(() => {
     res.clearCookie('connect.sid')

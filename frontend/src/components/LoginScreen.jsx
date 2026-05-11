@@ -4,6 +4,7 @@ import { motion } from 'framer-motion'
 export default function LoginScreen({ onLogin, error, busy, defaultEmail }) {
   const [email, setEmail] = useState(defaultEmail || '')
   const [password, setPassword] = useState('')
+  const [mode, setMode] = useState('admin') // admin | viewer
 
   return (
     <div className="start-screen">
@@ -12,6 +13,35 @@ export default function LoginScreen({ onLogin, error, busy, defaultEmail }) {
       <div className="start-card">
         <h1 className="start-title">Zoom</h1>
         <p className="start-subtitle">Sign in to continue</p>
+
+        <div className="setup-toggles" style={{ marginTop: 6, marginBottom: 10 }}>
+          <div className="setup-toggle-row">
+            <div className="setup-toggle-left">
+              <div className="setup-toggle-name">Login as</div>
+              <div className="setup-toggle-help">Pick Admin or Viewer</div>
+            </div>
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                type="button"
+                className={`btn-export ${mode === 'admin' ? '' : ''}`}
+                onClick={() => setMode('admin')}
+                disabled={busy}
+                aria-pressed={mode === 'admin'}
+              >
+                Admin
+              </button>
+              <button
+                type="button"
+                className={`btn-export ${mode === 'viewer' ? '' : ''}`}
+                onClick={() => setMode('viewer')}
+                disabled={busy}
+                aria-pressed={mode === 'viewer'}
+              >
+                Viewer
+              </button>
+            </div>
+          </div>
+        </div>
 
         <div style={{ display: 'grid', gap: 10, width: '100%', marginTop: 16 }}>
           <label style={{ display: 'grid', gap: 6 }}>
@@ -45,11 +75,11 @@ export default function LoginScreen({ onLogin, error, busy, defaultEmail }) {
           className="btn-start-main"
           whileTap={{ scale: 0.96 }}
           disabled={busy || !email.trim() || !password}
-          onClick={() => onLogin?.({ email, password })}
+          onClick={() => onLogin?.({ email, password, mode })}
           style={{ marginTop: 14 }}
         >
           <span className="btn-icon">→</span>
-          {busy ? 'Signing in…' : 'Sign in'}
+          {busy ? 'Signing in…' : mode === 'admin' ? 'Sign in as Admin' : 'Sign in as Viewer'}
         </motion.button>
 
         {error ? <div className="start-error">{error}</div> : null}
