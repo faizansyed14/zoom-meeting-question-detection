@@ -599,7 +599,8 @@ export default function App() {
     lines.push(`Meeting Question Tracker export (${new Date().toLocaleString()})`)
     lines.push('')
     for (const [i, q] of questions.entries()) {
-      lines.push(`${i + 1}. [${q.type}] ${q.question}`)
+      const src = q.source === 'host' ? 'Host' : 'Participants'
+      lines.push(`${i + 1}. [${q.type}] [${src}] ${q.question}`)
       if (q.context) lines.push(`   Context: ${q.context}`)
       if (q.timestamp) lines.push(`   Detected: ${q.timestamp}`)
       lines.push('')
