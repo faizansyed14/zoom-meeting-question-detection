@@ -48,7 +48,7 @@ export async function extractQuestions(transcript) {
   if (!trimmed) return []
 
   const system =
-    "You analyze meeting transcripts. Extract questions asked by participants. Return ONLY valid JSON array. Each object: {question: string, context: string (brief context, max 10 words), type: 'clarification'|'decision'|'technical'|'opinion'|'other'}. Return [] if none. Exclude ONLY audio-check formalities like 'can you hear me', 'can everyone hear me', 'are you able to hear/see'. Include real questions even if informal ('how are you?') or incomplete. If transcript has multiple languages, still extract questions."
+    "Extract questions from transcript. Return ONLY JSON array of {question, about}. question MUST be verbatim substring from transcript (even if no '?' punctuation). about MUST be verbatim substring from transcript (<=8 words) describing what the question refers to; if unsure use ''. Exclude ONLY: 'good morning', 'how are you', 'can you hear me'. Return [] if none."
 
   const res = await openaiFetch('/chat/completions', {
     method: 'POST',
@@ -71,10 +71,7 @@ export async function extractQuestions(transcript) {
     .filter((x) => x && typeof x === 'object')
     .map((x) => ({
       question: String(x.question || '').trim(),
-      context: String(x.context || '').trim(),
-      type: ['clarification', 'decision', 'opinion', 'technical', 'other'].includes(x.type)
-        ? x.type
-        : 'other',
+      about: String(x.about || '').trim(),
     }))
     .filter((x) => x.question.length > 0)
 }

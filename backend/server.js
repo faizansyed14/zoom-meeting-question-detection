@@ -108,7 +108,7 @@ app.post('/auth/logout', (req, res) => {
 // Shared meeting state (in-memory)
 const meetingState = {
   transcript: { participants: [], host: [] },
-  questions: [],
+  approvedQuestions: [],
   updatedAtMs: 0,
 }
 
@@ -129,7 +129,7 @@ app.get('/sync/state', requireAuth, (req, res) => {
       participants: meetingState.transcript.participants.join('\n'),
       host: meetingState.transcript.host.join('\n'),
     },
-    questions: meetingState.questions,
+    questions: meetingState.approvedQuestions,
     updatedAtMs: meetingState.updatedAtMs,
   })
 })
@@ -140,9 +140,13 @@ app.post('/sync/questions', requireAuth, requireAdmin, (req, res) => {
     res.status(400).json({ error: 'bad_request' })
     return
   }
-  meetingState.questions = questions
+  meetingState.approvedQuestions = questions
   meetingState.updatedAtMs = Date.now()
-  broadcastToWatchers(watchers, { type: 'questions.update', questions: meetingState.questions, updatedAtMs: meetingState.updatedAtMs })
+  broadcastToWatchers(watchers, {
+    type: 'questions.update',
+    questions: meetingState.approvedQuestions,
+    updatedAtMs: meetingState.updatedAtMs,
+  })
   res.json({ ok: true })
 })
 
@@ -212,7 +216,7 @@ wss.on('connection', (browserWs, _req) => {
             participants: meetingState.transcript.participants.join('\n'),
             host: meetingState.transcript.host.join('\n'),
           },
-          questions: meetingState.questions,
+          questions: meetingState.approvedQuestions,
           updatedAtMs: meetingState.updatedAtMs,
         }),
       )
