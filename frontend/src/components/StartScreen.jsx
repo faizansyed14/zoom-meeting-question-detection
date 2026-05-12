@@ -1,13 +1,26 @@
 import React from 'react'
 import { motion } from 'framer-motion'
 
-export default function StartScreen({ captureSources, setCaptureSources, onStart, error, disabled }) {
+export default function StartScreen({ captureSources, setCaptureSources, onStart, onLogout, error, disabled }) {
   const canStart = !!(captureSources?.participants || captureSources?.host)
   return (
     <div className="start-screen">
       <div className="start-glow" />
 
       <div className="start-card">
+        {onLogout ? (
+          <motion.button
+            className="btn-export"
+            style={{ position: 'absolute', top: 14, right: 14, padding: '8px 12px' }}
+            onClick={onLogout}
+            whileTap={{ scale: 0.96 }}
+            type="button"
+            disabled={disabled}
+          >
+            Logout
+          </motion.button>
+        ) : null}
+
         <h1 className="start-title">Zoom</h1>
         <p className="start-subtitle">Real-time question detection from your Zoom meeting</p>
 

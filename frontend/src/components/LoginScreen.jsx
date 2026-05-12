@@ -20,10 +20,10 @@ export default function LoginScreen({ onLogin, error, busy, defaultEmail }) {
               <div className="setup-toggle-name">Login as</div>
               <div className="setup-toggle-help">Pick Admin or Viewer</div>
             </div>
-            <div style={{ display: 'flex', gap: 8 }}>
+            <div className="toggle-group" role="group" aria-label="Login role">
               <button
                 type="button"
-                className={`btn-export ${mode === 'admin' ? '' : ''}`}
+                className={`toggle-btn ${mode === 'admin' ? 'active' : ''}`}
                 onClick={() => setMode('admin')}
                 disabled={busy}
                 aria-pressed={mode === 'admin'}
@@ -32,7 +32,7 @@ export default function LoginScreen({ onLogin, error, busy, defaultEmail }) {
               </button>
               <button
                 type="button"
-                className={`btn-export ${mode === 'viewer' ? '' : ''}`}
+                className={`toggle-btn ${mode === 'viewer' ? 'active' : ''}`}
                 onClick={() => setMode('viewer')}
                 disabled={busy}
                 aria-pressed={mode === 'viewer'}

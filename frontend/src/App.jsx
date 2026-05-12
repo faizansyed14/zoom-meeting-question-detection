@@ -896,6 +896,7 @@ export default function App() {
           captureSources={captureSources}
           setCaptureSources={setCaptureSources}
           onStart={handleStart}
+          onLogout={handleLogout}
           error={combinedError}
           disabled={false}
         />
