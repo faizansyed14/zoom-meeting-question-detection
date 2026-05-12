@@ -788,6 +788,60 @@ html, body, #app {
   padding: 0 12px 16px;
 }
 
+.viewer-stack {
+  flex: 1;
+  display: grid;
+  grid-template-rows: 56% 12px 1fr;
+  overflow: hidden;
+}
+
+.feed-panel.viewer-top {
+  min-height: 120px;
+}
+
+.feed-panel.viewer-bottom {
+  min-height: 120px;
+}
+
+.viewer-dragger {
+  height: 12px;
+  cursor: row-resize;
+  background: rgba(20, 17, 12, 0.04);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  user-select: none;
+  touch-action: none;
+}
+
+.viewer-dragger:hover {
+  background: rgba(20, 17, 12, 0.06);
+}
+
+.viewer-dragger:focus {
+  outline: none;
+  box-shadow: 0 0 0 4px rgba(232,114,42,0.14) inset;
+}
+
+.viewer-dragger-grip {
+  width: 40px;
+  height: 4px;
+  border-radius: 99px;
+  background: rgba(232, 114, 42, 0.45);
+  box-shadow: 0 0 0 1px rgba(232, 114, 42, 0.18);
+}
+
+.viewer-dragger-hint {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
 .feed-empty {
   display: flex;
   flex-direction: column;

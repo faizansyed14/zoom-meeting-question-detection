@@ -193,6 +193,15 @@ export default function App() {
   const [authError, setAuthError] = useState('')
   const [authBusy, setAuthBusy] = useState(false)
 
+  const [viewerSplitPct, setViewerSplitPct] = useState(() => {
+    try {
+      const raw = localStorage.getItem('zqt_viewer_split_pct')
+      const n = Number(raw)
+      if (Number.isFinite(n) && n >= 0.2 && n <= 0.8) return n
+    } catch {}
+    return 0.56
+  })
+
   const [status, setStatus] = useState('idle') // idle | connecting | live | stopped
   const [allQuestions, setAllQuestions] = useState([])
   const [approvedQuestions, setApprovedQuestions] = useState([])
@@ -211,6 +220,9 @@ export default function App() {
   const participantsAudioCbRef = useRef(null)
   const hostAudioCbRef = useRef(null)
   const interimRef = useRef({ participants: '', host: '' })
+  const approvedSeqRef = useRef(0)
+  const viewerStackRef = useRef(null)
+  const viewerDragRef = useRef({ dragging: false, startY: 0, startPct: 0 })
 
   const participantsCapture = useAudioCapture({
     onAudioChunk: (b64) => participantsAudioCbRef.current?.(b64),
@@ -261,14 +273,18 @@ export default function App() {
         setInterimText({ participants: '', host: '' })
         const incoming = Array.isArray(msg?.questions) ? msg.questions : []
         setApprovedQuestions(
-          incoming.filter((q) => !answeredKeysRef.current.has(normalizeQuestion(`${q?.source || 'participants'}:${q?.question || ''}`))),
+          incoming.filter(
+            (q) => !answeredKeysRef.current.has(normalizeQuestion(`${q?.source || 'participants'}:${q?.question || ''}`)),
+          ),
         )
         return
       }
       if (msg.type === 'questions.update') {
         const incoming = Array.isArray(msg?.questions) ? msg.questions : []
         setApprovedQuestions(
-          incoming.filter((q) => !answeredKeysRef.current.has(normalizeQuestion(`${q?.source || 'participants'}:${q?.question || ''}`))),
+          incoming.filter(
+            (q) => !answeredKeysRef.current.has(normalizeQuestion(`${q?.source || 'participants'}:${q?.question || ''}`)),
+          ),
         )
         return
       }
@@ -444,9 +460,7 @@ export default function App() {
     return [...(allQuestions || [])].sort((a, b) => (b.detectedAtMs || 0) - (a.detectedAtMs || 0))
   }, [allQuestions])
 
-  const newestApproved = useMemo(() => {
-    return [...(approvedQuestions || [])].sort((a, b) => (b.detectedAtMs || 0) - (a.detectedAtMs || 0))
-  }, [approvedQuestions])
+  const approvedOrdered = approvedQuestions || []
 
   const newestAnswered = useMemo(() => {
     return [...(answeredQuestions || [])].sort((a, b) => (b.answeredAtMs || 0) - (a.answeredAtMs || 0))
@@ -478,7 +492,10 @@ export default function App() {
         (x) => normalizeQuestion(`${x.source || 'participants'}:${x.rawQuestion || x.question || ''}`) === key,
       )
       if (exists) return prev
-      return pruneRedundantQuestions([{ ...q }, ...prev])
+      const approvedAtMs = Date.now()
+      approvedSeqRef.current += 1
+      const approvedSeq = approvedSeqRef.current
+      return [{ ...q, approvedAtMs, approvedSeq }, ...prev]
     })
   }
 
@@ -492,6 +509,38 @@ export default function App() {
     const k = 'zqt_auto_share_all'
     localStorage.setItem(k, autoShareAll ? '1' : '0')
   }, [autoShareAll])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('zqt_viewer_split_pct', String(viewerSplitPct))
+    } catch {}
+  }, [viewerSplitPct])
+
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!viewerDragRef.current.dragging) return
+      const el = viewerStackRef.current
+      if (!el) return
+      const rect = el.getBoundingClientRect()
+      const dy = e.clientY - viewerDragRef.current.startY
+      const pct = viewerDragRef.current.startPct + dy / Math.max(1, rect.height)
+      const clamped = Math.max(0.2, Math.min(0.8, pct))
+      setViewerSplitPct(clamped)
+    }
+    const onUp = () => {
+      viewerDragRef.current.dragging = false
+      try {
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      } catch {}
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+    }
+  }, [])
 
   useEffect(() => {
     if (!autoShareAll) return
@@ -829,58 +878,92 @@ export default function App() {
         {combinedError ? <div className="error-toast">{combinedError}</div> : null}
 
         <div className="main-content" style={{ flexDirection: 'column' }}>
-          <div className="feed-panel">
-            <div className="feed-header">
-              <span className="label">Questions</span>
-              {newestApproved.length > 0 ? <span className="feed-count">{newestApproved.length}</span> : null}
-            </div>
+          <div
+            className="viewer-stack"
+            ref={viewerStackRef}
+            style={{ gridTemplateRows: `${Math.round(viewerSplitPct * 1000) / 10}% 12px 1fr` }}
+          >
+            <div className="feed-panel viewer-top">
+              <div className="feed-header">
+                <span className="label">Questions</span>
+                {approvedOrdered.length > 0 ? <span className="feed-count">{approvedOrdered.length}</span> : null}
+              </div>
 
-            <div className="feed-list">
-              {newestApproved.length === 0 ? (
-                <div className="feed-empty">
-                  <p className="feed-empty-title">No questions</p>
-                  <p className="feed-empty-sub">Waiting for admin to share questions</p>
-                </div>
-              ) : null}
-
-              {newestApproved.map((q, i) => (
-                <div key={q.id} style={{ position: 'relative' }}>
-                  <QuestionCard question={q} index={newestApproved.length - i} />
-                  <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 8 }}>
-                    <motion.button
-                      className="btn-export"
-                      style={{ padding: '8px 10px' }}
-                      whileTap={{ scale: 0.96 }}
-                      onClick={() => markAnswered(q)}
-                      type="button"
-                    >
-                      Answered
-                    </motion.button>
+              <div className="feed-list">
+                {approvedOrdered.length === 0 ? (
+                  <div className="feed-empty">
+                    <p className="feed-empty-title">No questions</p>
+                    <p className="feed-empty-sub">Waiting for admin to share questions</p>
                   </div>
-                </div>
-              ))}
+                ) : null}
+
+                {approvedOrdered.map((q, i) => (
+                  <div key={q.id} style={{ position: 'relative' }}>
+                    <QuestionCard question={q} index={approvedOrdered.length - i} />
+                    <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 8 }}>
+                      <motion.button
+                        className="btn-export"
+                        style={{ padding: '8px 10px' }}
+                        whileTap={{ scale: 0.96 }}
+                        onClick={() => markAnswered(q)}
+                        type="button"
+                      >
+                        Answered
+                      </motion.button>
+                    </div>
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
 
-          <div className="feed-panel">
-            <div className="feed-header">
-              <span className="label">Answered questions</span>
-              {newestAnswered.length > 0 ? <span className="feed-count">{newestAnswered.length}</span> : null}
+            <div
+              className="viewer-dragger"
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label="Resize panels"
+              tabIndex={0}
+              onPointerDown={(e) => {
+                e.preventDefault()
+                viewerDragRef.current.dragging = true
+                viewerDragRef.current.startY = e.clientY
+                viewerDragRef.current.startPct = viewerSplitPct
+                try {
+                  document.body.style.cursor = 'row-resize'
+                  document.body.style.userSelect = 'none'
+                } catch {}
+                try {
+                  e.currentTarget.setPointerCapture(e.pointerId)
+                } catch {}
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'ArrowUp') setViewerSplitPct((p) => Math.max(0.2, +(p - 0.03).toFixed(3)))
+                if (e.key === 'ArrowDown') setViewerSplitPct((p) => Math.min(0.8, +(p + 0.03).toFixed(3)))
+              }}
+            >
+              <div className="viewer-dragger-grip" />
+              <div className="viewer-dragger-hint">Drag to resize</div>
             </div>
 
-            <div className="feed-list">
-              {newestAnswered.length === 0 ? (
-                <div className="feed-empty">
-                  <p className="feed-empty-title">None answered yet</p>
-                  <p className="feed-empty-sub">Click Accepted to move a question here</p>
-                </div>
-              ) : null}
+            <div className="feed-panel viewer-bottom">
+              <div className="feed-header">
+                <span className="label">Answered questions</span>
+                {newestAnswered.length > 0 ? <span className="feed-count">{newestAnswered.length}</span> : null}
+              </div>
 
-              {newestAnswered.map((q, i) => (
-                <div key={`${q.id}_ans`} style={{ position: 'relative', opacity: 0.55 }}>
-                  <QuestionCard question={q} index={newestAnswered.length - i} />
-                </div>
-              ))}
+              <div className="feed-list">
+                {newestAnswered.length === 0 ? (
+                  <div className="feed-empty">
+                    <p className="feed-empty-title">None answered yet</p>
+                    <p className="feed-empty-sub">Click Answered to move a question here</p>
+                  </div>
+                ) : null}
+
+                {newestAnswered.map((q, i) => (
+                  <div key={`${q.id}_ans`} style={{ position: 'relative', opacity: 0.55 }}>
+                    <QuestionCard question={q} index={newestAnswered.length - i} />
+                  </div>
+                ))}
+              </div>
             </div>
           </div>
         </div>
@@ -968,7 +1051,7 @@ export default function App() {
 
             {newestAll.map((q, i) => {
               const key = normalizeQuestion(`${q.source || 'participants'}:${q.question || ''}`)
-              const isApproved = newestApproved.some(
+              const isApproved = approvedOrdered.some(
                 (a) => normalizeQuestion(`${a.source || 'participants'}:${a.question || ''}`) === key,
               )
 
@@ -996,20 +1079,20 @@ export default function App() {
         <div className="feed-panel">
           <div className="feed-header">
             <span className="label">Viewer Questions (approved)</span>
-            {newestApproved.length > 0 ? <span className="feed-count">{newestApproved.length}</span> : null}
+            {approvedOrdered.length > 0 ? <span className="feed-count">{approvedOrdered.length}</span> : null}
           </div>
 
           <div className="feed-list">
-            {newestApproved.length === 0 ? (
+            {approvedOrdered.length === 0 ? (
               <div className="feed-empty">
                 <p className="feed-empty-title">Nothing shared yet</p>
                 <p className="feed-empty-sub">Click ✓ on a question to show it to the viewer</p>
               </div>
             ) : null}
 
-            {newestApproved.map((q, i) => (
+            {approvedOrdered.map((q, i) => (
               <div key={q.id} style={{ position: 'relative' }}>
-                <QuestionCard question={q} index={newestApproved.length - i} />
+                <QuestionCard question={q} index={approvedOrdered.length - i} />
                 <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 8 }}>
                   <motion.button
                     className="btn-stop"
